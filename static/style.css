@@ -527,6 +527,16 @@ body {
     margin-top: 1rem;
 }
 
+/* NEW FEATURE ADDED */
+#live-route-status {
+    color: #17496b;
+    background: #eef7ff;
+    border: 1px solid #d8e4ef;
+    border-radius: 6px;
+    padding: 0.6rem;
+    margin-top: 0.75rem;
+}
+
 /* Hospitals */
 .hospital-card { 
     border: 1px solid #ddd; 
@@ -560,6 +570,246 @@ body {
     color: #666; 
     margin-top: 0.5rem;
     line-height: 1.5;
+}
+
+/* NEW FEATURE ADDED */
+.ai-preview {
+    margin-top: 1rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-panel,
+.ai-mini {
+    border: 1px solid #d8e4ef;
+    border-radius: 8px;
+    background: #f7fbff;
+    color: #2c3e50;
+}
+
+/* NEW FEATURE ADDED */
+.ai-panel {
+    padding: 1rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-mini {
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* NEW FEATURE ADDED */
+.ai-panel-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-weight: 700;
+    color: #17496b;
+    margin-bottom: 0.75rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-mini-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.35rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-confidence {
+    border-radius: 999px;
+    padding: 0.25rem 0.55rem;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+/* NEW FEATURE ADDED */
+.confidence-high {
+    background: #e9f8ee;
+    color: #2d6a1a;
+}
+
+/* NEW FEATURE ADDED */
+.confidence-medium {
+    background: #fff8df;
+    color: #9a6a00;
+}
+
+/* NEW FEATURE ADDED */
+.confidence-low {
+    background: #f4f6f8;
+    color: #607080;
+}
+
+/* NEW FEATURE ADDED */
+.risk-border-high {
+    border-left: 5px solid #8B0000;
+}
+
+/* NEW FEATURE ADDED */
+.risk-border-medium {
+    border-left: 5px solid #9a6a00;
+}
+
+/* NEW FEATURE ADDED */
+.risk-border-low {
+    border-left: 5px solid #2d6a1a;
+}
+
+/* NEW FEATURE ADDED */
+.ai-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-grid div {
+    background: white;
+    border-radius: 6px;
+    padding: 0.65rem;
+    border: 1px solid #e1edf5;
+}
+
+/* NEW FEATURE ADDED */
+.ai-grid strong,
+.ai-grid span {
+    display: block;
+    font-size: 12px;
+}
+
+/* NEW FEATURE ADDED */
+.ai-grid strong {
+    color: #607080;
+    margin-bottom: 0.25rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-grid span {
+    font-weight: 700;
+    color: #17496b;
+    text-transform: capitalize;
+}
+
+/* NEW FEATURE ADDED */
+.ai-summary {
+    font-size: 13px;
+    color: #4b5b66;
+    margin-top: 0.5rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-understood {
+    background: white;
+    border: 1px solid #e1edf5;
+    border-radius: 6px;
+    padding: 0.65rem;
+    margin-bottom: 0.75rem;
+}
+
+/* NEW FEATURE ADDED */
+.ai-checklist {
+    margin-top: 0.5rem;
+    padding-left: 1.25rem;
+    font-size: 13px;
+    color: #4b5b66;
+}
+
+/* NEW FEATURE ADDED */
+.first-aid-box {
+    margin-top: 0.75rem;
+    background: white;
+    border: 1px solid #e1edf5;
+    border-radius: 6px;
+    padding: 0.75rem;
+    font-size: 13px;
+}
+
+/* NEW FEATURE ADDED */
+.voice-understanding {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+/* NEW FEATURE ADDED */
+.voice-understanding span {
+    background: #f7fbff;
+    border: 1px solid #d8e4ef;
+    border-radius: 999px;
+    padding: 0.25rem 0.5rem;
+    font-size: 12px;
+}
+
+/* NEW FEATURE ADDED */
+.voice-understanding-reason {
+    margin-top: 0.5rem;
+    color: #607080;
+    font-size: 12px;
+}
+
+/* NEW FEATURE ADDED */
+.hospital-ai-reason {
+    background: #f8fff6;
+    border-color: #d8e8d2;
+}
+
+/* NEW FEATURE ADDED */
+.reporter-tracking-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid #d8e4ef;
+    border-radius: 10px;
+    background: #f7fbff;
+}
+
+/* NEW FEATURE ADDED */
+.reporter-tracking-card p {
+    color: #607080;
+    font-size: 13px;
+    margin-top: 0.25rem;
+}
+
+/* NEW FEATURE ADDED */
+.tracker-eta {
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: #8B0000;
+    color: white;
+    padding: 0.45rem 0.7rem;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+/* NEW FEATURE ADDED */
+.risk-high,
+.capacity-low {
+    color: #8B0000;
+    font-weight: 700;
+}
+
+/* NEW FEATURE ADDED */
+.risk-medium,
+.capacity-medium {
+    color: #9a6a00;
+    font-weight: 700;
+}
+
+/* NEW FEATURE ADDED */
+.risk-low,
+.capacity-good {
+    color: #2d6a1a;
+    font-weight: 700;
 }
 
 /* Driver Header */
@@ -634,6 +884,42 @@ body {
     color: #666; 
     font-size: 13px; 
     margin-bottom: 1rem;
+}
+
+/* NEW FEATURE ADDED */
+.voice-report-box {
+    border: 1px solid #f0d9d9;
+    background: linear-gradient(135deg, #fff8f8, #ffffff);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* NEW FEATURE ADDED */
+#voice-report-btn.listening {
+    background: #8B0000;
+    color: white;
+    border-color: #8B0000;
+}
+
+/* NEW FEATURE ADDED */
+.voice-report-status {
+    margin-top: 0.75rem;
+    font-size: 13px;
+    color: #6b4b4b;
+    text-align: center;
+}
+
+/* NEW FEATURE ADDED */
+.voice-transcript {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    background: white;
+    border: 1px solid #eadada;
+    color: #2c3e50;
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 .muted { 

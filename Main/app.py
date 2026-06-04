@@ -1,5 +1,21 @@
 from flask import Flask, render_template, request, jsonify
 from database import get_connection
+from ai_features import (
+    calculate_emergency_risk_score,
+    calculate_hospital_score,
+    detect_injury_category,
+    detect_severity,
+    estimate_ambulance_eta,
+    explain_hospital_match,
+    explain_severity_detection,
+    generate_driver_alert_message,
+    generate_emergency_summary,
+    generate_first_aid_checklist,
+    get_hospital_capacity_status,
+    get_priority_label,
+    get_triage_confidence,
+    suggest_route_decision,
+)
 import os
 
 basedir = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +34,86 @@ app = Flask(
     static_url_path='/static',
     template_folder=template_path
 )
+
+
+# NEW FEATURE ADDED
+def get_float_value(data, *keys):
+    for key in keys:
+        value = data.get(key)
+        if value is None or value == '':
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+# NEW FEATURE ADDED
+def get_emergency_coordinates(data):
+    return (
+        get_float_value(data, 'lat', 'latitude'),
+        get_float_value(data, 'lng', 'longitude')
+    )
+
+
+# NEW FEATURE ADDED
+def get_ambulance_coordinate_columns(cur):
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'ambulances'
+          AND column_name IN ('lat', 'lng', 'latitude', 'longitude')
+    """)
+    columns = {row[0] for row in cur.fetchall()}
+
+    if 'lat' in columns and 'lng' in columns:
+        return 'lat', 'lng'
+    if 'latitude' in columns and 'longitude' in columns:
+        return 'latitude', 'longitude'
+    return None, None
+
+
+# NEW FEATURE ADDED
+def calculate_distance(lat1, lng1, lat2, lng2):
+    return ((lat1 - lat2) ** 2 + (lng1 - lng2) ** 2) ** 0.5
+
+
+# NEW FEATURE ADDED
+def find_best_available_ambulance(cur, emergency_lat=None, emergency_lng=None):
+    if emergency_lat is not None and emergency_lng is not None:
+        lat_column, lng_column = get_ambulance_coordinate_columns(cur)
+
+        if lat_column and lng_column:
+            cur.execute(f"""
+                SELECT id, driver_name, vehicle_no, {lat_column}, {lng_column}
+                FROM ambulances
+                WHERE status = 'free'
+                  AND {lat_column} IS NOT NULL
+                  AND {lng_column} IS NOT NULL
+            """)
+
+            ambulances = []
+            for row in cur.fetchall():
+                ambulance_lat = get_float_value({'lat': row[3]}, 'lat')
+                ambulance_lng = get_float_value({'lng': row[4]}, 'lng')
+                if ambulance_lat is None or ambulance_lng is None:
+                    continue
+                ambulances.append((
+                    calculate_distance(emergency_lat, emergency_lng, ambulance_lat, ambulance_lng),
+                    row
+                ))
+
+            if ambulances:
+                return min(ambulances, key=lambda item: item[0])[1]
+
+    cur.execute("""
+        SELECT id, driver_name, vehicle_no
+        FROM ambulances
+        WHERE status = 'free'
+        LIMIT 1
+    """)
+    return cur.fetchone()
 
 
 def get_hospital_recommendations(cur, severity='moderate', injury_type=''):
@@ -39,6 +135,42 @@ def get_hospital_recommendations(cur, severity='moderate', injury_type=''):
             ORDER BY available_beds DESC
             LIMIT 5
         """)
+
+    rows = cur.fetchall()
+    hospitals = []
+    for row in rows:
+        hospitals.append({
+            'id': row[0],
+            'name': row[1],
+            'location': row[2],
+            'available_beds': row[3],
+            'icu_available': row[4],
+            'doctors_available': row[5],
+            'has_trauma': row[6],
+            'has_neurosurgeon': row[7],
+            'has_burn_unit': row[8],
+            'has_blood_bank': row[9]
+        })
+    return hospitals
+
+
+# NEW FEATURE ADDED
+def get_scored_hospital_recommendations(cur, severity='moderate', injury_type=''):
+    where_clause = "icu_available > 0" if severity == 'critical' else "available_beds > 0"
+
+    cur.execute(f"""
+        SELECT id, name, location, available_beds, icu_available, doctors_available,
+               has_trauma, has_neurosurgeon, has_burn_unit, has_blood_bank
+        FROM hospitals
+        WHERE {where_clause}
+        ORDER BY (
+            (COALESCE(available_beds, 0) * 2) +
+            (COALESCE(icu_available, 0) * 5) +
+            (COALESCE(doctors_available, 0) * 3) +
+            (CASE WHEN has_trauma THEN 10 ELSE 0 END)
+        ) DESC
+        LIMIT 5
+    """)
 
     rows = cur.fetchall()
     hospitals = []
@@ -84,15 +216,10 @@ def submit_emergency():
     # Get inserted emergency ID
     emergency_id = cur.fetchone()[0]
 
-    # Find the nearest free ambulance
-    cur.execute("""
-        SELECT id, driver_name, vehicle_no
-        FROM ambulances
-        WHERE status = 'free'
-        LIMIT 1
-    """)
-
-    ambulance = cur.fetchone()
+    # NEW FEATURE ADDED
+    # Find the nearest free ambulance when coordinates exist; otherwise use original fallback.
+    emergency_lat, emergency_lng = get_emergency_coordinates(data)
+    ambulance = find_best_available_ambulance(cur, emergency_lat, emergency_lng)
 
     if ambulance:
         ambulance_id = ambulance[0]
@@ -308,11 +435,58 @@ def suggest_hospital():
     conn = get_connection()
     cur = conn.cursor()
 
-    hospitals = get_hospital_recommendations(cur, severity, injury_type)
+    # NEW FEATURE ADDED
+    hospitals = get_scored_hospital_recommendations(cur, severity, injury_type)
     cur.close()
     conn.close()
 
     return jsonify(hospitals)
+
+
+# NEW FEATURE ADDED
+@app.route('/api/ai/emergency-insights', methods=['POST'])
+def emergency_ai_insights():
+    data = request.json or {}
+    injury_text = data.get('injury_type') or data.get('description') or ''
+    combined_text = f"{data.get('severity', '')} {injury_text}"
+    detected_severity = detect_severity(combined_text)
+    risk_score = calculate_emergency_risk_score({
+        **data,
+        'severity': detected_severity,
+        'injury_type': injury_text,
+    })
+    distance_km = get_float_value(data, 'distance_km')
+
+    return jsonify({
+        'detected_severity': detected_severity,
+        'injury_category': detect_injury_category(injury_text),
+        'risk_score': risk_score,
+        'priority_label': get_priority_label(risk_score),
+        'triage_confidence': get_triage_confidence(combined_text, detected_severity),
+        'severity_reason': explain_severity_detection(combined_text, detected_severity),
+        'eta_minutes': estimate_ambulance_eta(distance_km) if distance_km is not None else None,
+        'summary': generate_emergency_summary(data),
+        'driver_alert': generate_driver_alert_message(data),
+        'route_decision': suggest_route_decision(data),
+        'first_aid_checklist': generate_first_aid_checklist(injury_text)
+    })
+
+
+# NEW FEATURE ADDED
+@app.route('/api/ai/hospital-insights', methods=['POST'])
+def hospital_ai_insights():
+    data = request.json or {}
+    hospitals = data.get('hospitals', [])
+
+    enhanced_hospitals = []
+    for hospital in hospitals:
+        hospital_data = dict(hospital)
+        hospital_data['ai_score'] = calculate_hospital_score(hospital_data)
+        hospital_data['match_explanation'] = explain_hospital_match(hospital_data)
+        hospital_data['capacity_status'] = get_hospital_capacity_status(hospital_data)
+        enhanced_hospitals.append(hospital_data)
+
+    return jsonify(enhanced_hospitals)
 
 # HOSPITAL: Get all hospitals
 @app.route('/api/hospitals', methods=['GET'])
