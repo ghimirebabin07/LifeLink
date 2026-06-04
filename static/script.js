@@ -1,21 +1,29 @@
 let currentAssignment = null;
 let currentHospitalRecommendations = [];
 let routeMap = null;
+let voiceRecognition = null;
+let isVoiceListening = false;
 let routeMapState = {
     driverLocation: null,
     destinationLocation: null,
     routeLayer: null,
     driverMarker: null,
-    destinationMarker: null
+    destinationMarker: null,
+    locationWatchId: null,
+    lastRouteRefresh: 0
 };
 
 function resetRouteMap() {
+    stopLiveRouteTracking();
+
     routeMapState = {
         driverLocation: null,
         destinationLocation: null,
         routeLayer: null,
         driverMarker: null,
-        destinationMarker: null
+        destinationMarker: null,
+        locationWatchId: null,
+        lastRouteRefresh: 0
     };
 
     if (routeMap) {
@@ -27,6 +35,317 @@ function resetRouteMap() {
 function buildMapsDirectionsUrl(locationName) {
     const destination = encodeURIComponent(locationName || '');
     return `https://www.google.com/maps/dir/?api=1&destination=${destination}`;
+}
+
+// NEW FEATURE ADDED
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+// NEW FEATURE ADDED
+async function fetchEmergencyAiInsights(emergencyData) {
+    const response = await fetch('/api/ai/emergency-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(emergencyData)
+    });
+
+    if (!response.ok) {
+        throw new Error('Unable to load emergency insights');
+    }
+
+    return response.json();
+}
+
+// NEW FEATURE ADDED
+async function fetchHospitalAiInsights(hospitals) {
+    const response = await fetch('/api/ai/hospital-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hospitals })
+    });
+
+    if (!response.ok) {
+        throw new Error('Unable to load hospital insights');
+    }
+
+    return response.json();
+}
+
+// NEW FEATURE ADDED
+function getEmergencyFormData() {
+    const transcriptBox = document.getElementById('voice-transcript');
+    const transcriptText = transcriptBox ? transcriptBox.dataset.rawTranscript : '';
+    const injuryText = transcriptText
+        ? transcriptText
+        : (document.getElementById('injury-type') ? document.getElementById('injury-type').value : '');
+
+    return {
+        reporter_name: document.getElementById('reporter-name') ? document.getElementById('reporter-name').value : '',
+        location_name: document.getElementById('location') ? document.getElementById('location').value : '',
+        severity: document.getElementById('severity') ? document.getElementById('severity').value : 'moderate',
+        injury_type: injuryText
+    };
+}
+
+// NEW FEATURE ADDED
+function getRiskClass(score) {
+    if (score >= 75) return 'high';
+    if (score >= 45) return 'medium';
+    return 'low';
+}
+
+// NEW FEATURE ADDED
+function renderEmergencyAiPanel(container, insights, title) {
+    if (!container || !insights) return;
+
+    const checklist = Array.isArray(insights.first_aid_checklist)
+        ? insights.first_aid_checklist.map(item => `<li>${escapeHtml(item)}</li>`).join('')
+        : '';
+    const riskClass = getRiskClass(insights.risk_score || 0);
+    const confidence = insights.triage_confidence || 'low';
+    const priorityLabel = insights.priority_label || 'Monitor closely';
+
+    container.style.display = 'block';
+    container.innerHTML = `
+        <div class="ai-panel risk-border-${riskClass}">
+            <div class="ai-panel-title">
+                <span>${escapeHtml(title || 'AI assistance')}</span>
+                <span class="ai-confidence confidence-${escapeHtml(confidence)}">${escapeHtml(confidence)} confidence</span>
+            </div>
+            <p class="ai-summary ai-understood"><strong>AI understood this as:</strong> ${escapeHtml(insights.summary)}</p>
+            <div class="ai-grid">
+                <div><strong>Detected severity</strong><span>${escapeHtml(insights.detected_severity)}</span></div>
+                <div><strong>Injury category</strong><span>${escapeHtml(insights.injury_category)}</span></div>
+                <div><strong>Risk score</strong><span class="risk-${riskClass}">${escapeHtml(insights.risk_score)}/100</span></div>
+                <div><strong>Priority</strong><span class="risk-${riskClass}">${escapeHtml(priorityLabel)}</span></div>
+            </div>
+            <p class="ai-summary"><strong>Why:</strong> ${escapeHtml(insights.severity_reason)}</p>
+            <p class="ai-summary"><strong>Route advice:</strong> ${escapeHtml(insights.route_decision)}</p>
+            ${checklist ? `<div class="first-aid-box"><strong>First-aid guidance while waiting:</strong><ul class="ai-checklist">${checklist}</ul></div>` : ''}
+        </div>
+    `;
+}
+
+// NEW FEATURE ADDED
+function updateReporterTracking(insights) {
+    const eta = document.getElementById('reporter-eta');
+    const trackingCard = document.getElementById('reporter-tracking-card');
+    if (!eta || !trackingCard || !insights) return;
+
+    const riskScore = Number(insights.risk_score || 0);
+    const estimatedEta = riskScore >= 80 ? '~4 min' : (riskScore >= 55 ? '~6 min' : '~8 min');
+    eta.textContent = `ETA ${estimatedEta}`;
+    trackingCard.className = `reporter-tracking-card risk-border-${getRiskClass(riskScore)}`;
+}
+
+// NEW FEATURE ADDED
+async function updateEmergencyAiPreview() {
+    const preview = document.getElementById('emergency-ai-preview');
+    if (!preview) return;
+
+    try {
+        const insights = await fetchEmergencyAiInsights(getEmergencyFormData());
+        renderEmergencyAiPanel(preview, insights, 'AI emergency preview');
+    } catch (error) {
+        console.error('Error loading AI preview:', error);
+    }
+}
+
+// NEW FEATURE ADDED
+function getSpeechRecognition() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+// NEW FEATURE ADDED
+function setVoiceReportStatus(message, transcript) {
+    const status = document.getElementById('voice-report-status');
+    const transcriptBox = document.getElementById('voice-transcript');
+
+    if (status) {
+        status.textContent = message;
+    }
+
+    if (transcriptBox && transcript) {
+        transcriptBox.style.display = 'block';
+        transcriptBox.textContent = transcript;
+    }
+}
+
+// NEW FEATURE ADDED
+function renderVoiceUnderstanding(transcript, insights) {
+    const transcriptBox = document.getElementById('voice-transcript');
+    if (!transcriptBox || !insights) return;
+
+    const riskClass = getRiskClass(insights.risk_score || 0);
+    transcriptBox.dataset.rawTranscript = transcript;
+    transcriptBox.style.display = 'block';
+    transcriptBox.innerHTML = `
+        <strong>Recognized speech:</strong> ${escapeHtml(transcript)}
+        <div class="voice-understanding">
+            <span>Severity: ${escapeHtml(insights.detected_severity)}</span>
+            <span>Category: ${escapeHtml(insights.injury_category)}</span>
+            <span class="risk-${riskClass}">Risk: ${escapeHtml(insights.risk_score)}/100</span>
+        </div>
+        <div class="voice-understanding-reason">${escapeHtml(insights.severity_reason)}</div>
+    `;
+}
+
+// NEW FEATURE ADDED
+function setSelectValue(selectId, value) {
+    const select = document.getElementById(selectId);
+    if (!select || !value) return;
+
+    Array.from(select.options).forEach(option => {
+        if (option.value.toLowerCase() === value.toLowerCase()) {
+            select.value = option.value;
+        }
+    });
+}
+
+// NEW FEATURE ADDED
+function extractLocationFromSpeech(text) {
+    const emergencyText = (text || '').trim();
+    const locationPatterns = [
+        /\b(?:at|near|in|around)\s+(.+?)(?:,|\.|\b(?:with|and|there|one|someone|person|patient|is|has)\b|$)/i,
+        /\blocation\s+(.+?)(?:,|\.|$)/i,
+    ];
+
+    for (const pattern of locationPatterns) {
+        const match = emergencyText.match(pattern);
+        if (match && match[1]) {
+            return match[1].trim();
+        }
+    }
+
+    return '';
+}
+
+// NEW FEATURE ADDED
+function detectInjuryOptionFromSpeech(text) {
+    const emergencyText = (text || '').toLowerCase();
+
+    if (emergencyText.includes('fracture') || emergencyText.includes('broken bone') || emergencyText.includes('bone broken')) {
+        return 'Bone fracture';
+    }
+    if (emergencyText.includes('burn') || emergencyText.includes('fire') || emergencyText.includes('scald')) {
+        return 'Burns';
+    }
+    if (emergencyText.includes('bleeding') || emergencyText.includes('blood')) {
+        return 'Internal bleeding';
+    }
+    if (emergencyText.includes('spinal') || emergencyText.includes('spine') || emergencyText.includes('back injury')) {
+        return 'Spinal injury';
+    }
+    if (emergencyText.includes('chest') || emergencyText.includes('heart') || emergencyText.includes('breathing')) {
+        return 'Chest injury';
+    }
+    if (emergencyText.includes('head') || emergencyText.includes('unconscious') || emergencyText.includes('seizure')) {
+        return 'Head trauma';
+    }
+    return 'Unknown';
+}
+
+// NEW FEATURE ADDED
+function applyVoiceReportToForm(transcript) {
+    const emergencyText = transcript || '';
+    const location = extractLocationFromSpeech(emergencyText);
+    const injuryOption = detectInjuryOptionFromSpeech(emergencyText);
+    const locationInput = document.getElementById('location');
+
+    if (locationInput && location) {
+        locationInput.value = location;
+    }
+
+    setSelectValue('injury-type', injuryOption);
+
+    fetchEmergencyAiInsights({
+        location_name: location,
+        severity: document.getElementById('severity') ? document.getElementById('severity').value : 'moderate',
+        injury_type: emergencyText,
+        description: emergencyText
+    }).then(insights => {
+        setSelectValue('severity', insights.detected_severity || 'moderate');
+        renderVoiceUnderstanding(emergencyText, insights);
+        updateEmergencyAiPreview();
+    }).catch(error => {
+        console.error('Error applying voice insights:', error);
+        updateEmergencyAiPreview();
+    });
+}
+
+// NEW FEATURE ADDED
+function stopVoiceReport() {
+    if (voiceRecognition && isVoiceListening) {
+        voiceRecognition.stop();
+    }
+}
+
+// NEW FEATURE ADDED
+function startVoiceReport() {
+    const Recognition = getSpeechRecognition();
+    const button = document.getElementById('voice-report-btn');
+
+    if (!Recognition) {
+        setVoiceReportStatus('Voice reporting is not supported in this browser. Try Chrome or Edge.');
+        return;
+    }
+
+    if (isVoiceListening) {
+        stopVoiceReport();
+        return;
+    }
+
+    voiceRecognition = new Recognition();
+    voiceRecognition.lang = 'en-US';
+    voiceRecognition.interimResults = true;
+    voiceRecognition.continuous = false;
+
+    voiceRecognition.onstart = () => {
+        isVoiceListening = true;
+        if (button) {
+            button.textContent = 'Stop Listening';
+            button.classList.add('listening');
+        }
+        setVoiceReportStatus('Listening... speak the emergency, location, and injury.');
+    };
+
+    voiceRecognition.onresult = event => {
+        let transcript = '';
+        for (let index = 0; index < event.results.length; index += 1) {
+            transcript += event.results[index][0].transcript;
+        }
+        setVoiceReportStatus('Listening... review the recognized text below.', transcript.trim());
+
+        if (event.results[event.results.length - 1].isFinal) {
+            applyVoiceReportToForm(transcript.trim());
+        }
+    };
+
+    voiceRecognition.onerror = event => {
+        setVoiceReportStatus(`Voice reporting error: ${event.error}`);
+    };
+
+    voiceRecognition.onend = () => {
+        isVoiceListening = false;
+        if (button) {
+            button.textContent = 'Speak Emergency';
+            button.classList.remove('listening');
+        }
+        const transcriptBox = document.getElementById('voice-transcript');
+        if (transcriptBox && transcriptBox.textContent.trim()) {
+            setVoiceReportStatus('Voice report applied. Check the form before sending.');
+        } else {
+            setVoiceReportStatus('Voice reporting stopped.');
+        }
+    };
+
+    voiceRecognition.start();
 }
 
 function renderRoutePanel() {
@@ -55,6 +374,7 @@ function renderRoutePanel() {
             <div class="route-summary">
                 <p class="info-text"><strong>${routeLabel}:</strong> ${routeTarget || 'Not available'}</p>
                 <p class="info-text"><strong>Recommended hospital:</strong> ${recommendedHospital ? recommendedHospital.name : 'Waiting for recommendation'}</p>
+                <p id="live-route-status" class="info-text"><strong>Live route:</strong> waiting for driver location</p>
             </div>
             <div id="route-map" class="route-map">
                 <div class="muted" style="padding:1.5rem">Loading route map...</div>
@@ -134,17 +454,18 @@ async function submitEmergency() {
     const location = document.getElementById('location').value;
     const severity = document.getElementById('severity').value;
     const injury = document.getElementById('injury-type').value;
+    const emergencyData = {
+        reporter_name: name,
+        location_name: location,
+        severity: severity,
+        injury_type: injury
+    };
 
     try {
         const response = await fetch('/api/emergency', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                reporter_name: name,
-                location_name: location,
-                severity: severity,
-                injury_type: injury
-            })
+            body: JSON.stringify(emergencyData)
         });
 
         const data = await response.json();
@@ -155,6 +476,15 @@ async function submitEmergency() {
             document.getElementById('emergency-id').textContent = data.emergency_id;
             document.getElementById('ambulance-info').textContent =
                     `Ambulance assigned: ${data.ambulance.driver_name} (${data.ambulance.vehicle_no})`;
+
+            // NEW FEATURE ADDED
+            try {
+                const insights = await fetchEmergencyAiInsights(emergencyData);
+                renderEmergencyAiPanel(document.getElementById('submitted-ai-insights'), insights, 'AI response guidance');
+                updateReporterTracking(insights);
+            } catch (insightError) {
+                console.error('Error loading submitted AI insights:', insightError);
+            }
         } else {
                 alert((data.message || 'No ambulance available right now. Please call 102.'));
         }
@@ -192,9 +522,20 @@ async function loadAlerts() {
             return;
         }
 
-        container.innerHTML = alerts.map(alert => {
+        // NEW FEATURE ADDED
+        const alertInsights = await Promise.all(alerts.map(alert => {
+            return fetchEmergencyAiInsights({
+                location_name: alert.location_name,
+                severity: alert.severity,
+                injury_type: alert.injury_type
+            }).catch(() => null);
+        }));
+
+        container.innerHTML = alerts.map((alert, index) => {
             const severityColor = alert.severity === 'critical' ? 'red' : (alert.severity === 'moderate' ? 'yellow' : 'green');
             const severityLabel = alert.severity === 'critical' ? 'Critical' : (alert.severity === 'moderate' ? 'Moderate' : 'Mild');
+            const insight = alertInsights[index];
+            const riskClass = insight ? getRiskClass(insight.risk_score || 0) : 'medium';
             
             return `
                 <div class="alert-card" data-emergency-id="${alert.id}" data-severity="${alert.severity}" data-injury="${alert.injury_type}" data-location="${alert.location_name}">
@@ -207,6 +548,16 @@ async function loadAlerts() {
                     <p class="alert-info"><strong>Location:</strong> ${alert.location_name}</p>
                     <p class="alert-info"><strong>Injury:</strong> ${alert.injury_type}</p>
                     <p class="alert-info"><strong>Reported by:</strong> ${alert.reporter_name}</p>
+                    ${insight ? `
+                        <div class="ai-mini risk-border-${riskClass}">
+                            <div class="ai-mini-title">
+                                <strong>AI priority:</strong>
+                                <span class="risk-${riskClass}">${escapeHtml(insight.priority_label)} (${insight.risk_score}/100)</span>
+                            </div>
+                            <div>${escapeHtml(insight.driver_alert)}</div>
+                            <div><strong>Why:</strong> ${escapeHtml(insight.severity_reason)}</div>
+                        </div>
+                    ` : ''}
                     <div class="alert-buttons">
                         <button class="btn btn-green accept-alert-btn">
                             Accept case
@@ -323,7 +674,7 @@ async function loadHospitalSuggestions(severity, injuryType) {
             body: JSON.stringify({ severity: severity, injury_type: injuryType })
         });
 
-        const hospitals = await response.json();
+        let hospitals = await response.json();
         const container = document.getElementById('hospitals-list');
 
         if (!hospitals || hospitals.length === 0) {
@@ -331,6 +682,13 @@ async function loadHospitalSuggestions(severity, injuryType) {
             currentHospitalRecommendations = [];
             renderRoutePanel();
             return;
+        }
+
+        // NEW FEATURE ADDED
+        try {
+            hospitals = await fetchHospitalAiInsights(hospitals);
+        } catch (insightError) {
+            console.error('Error loading hospital AI insights:', insightError);
         }
 
         currentHospitalRecommendations = hospitals;
@@ -353,6 +711,16 @@ async function loadHospitalSuggestions(severity, injuryType) {
                     ${h.has_burn_unit ? 'Burn unit available' : 'No burn unit'} &nbsp;
                     ${h.has_blood_bank ? 'Blood bank available' : 'No blood bank'}
                 </div>
+                ${h.match_explanation ? `
+                    <div class="ai-mini hospital-ai-reason">
+                        <div class="ai-mini-title">
+                            <strong>AI hospital score:</strong>
+                            <span>${escapeHtml(h.ai_score)}</span>
+                        </div>
+                        <div>${escapeHtml(h.match_explanation)}</div>
+                        <div><strong>Capacity status:</strong> <span class="capacity-${escapeHtml(h.capacity_status)}">${escapeHtml(h.capacity_status)}</span></div>
+                    </div>
+                ` : ''}
             </div>
         `).join('');
 
@@ -447,6 +815,120 @@ function getDriverLocation() {
     });
 }
 
+// NEW FEATURE ADDED
+function updateLiveRouteStatus(message) {
+    const status = document.getElementById('live-route-status');
+    if (status) {
+        status.innerHTML = `<strong>Live route:</strong> ${escapeHtml(message)}`;
+    }
+}
+
+// NEW FEATURE ADDED
+function updateDriverMarker(location) {
+    if (!routeMap || !location) {
+        return;
+    }
+
+    routeMapState.driverLocation = location;
+
+    if (!routeMapState.driverMarker) {
+        routeMapState.driverMarker = L.marker([location.lat, location.lng], {
+            title: 'Ambulance live location'
+        }).addTo(routeMap).bindPopup('Ambulance live location');
+        return;
+    }
+
+    routeMapState.driverMarker.setLatLng([location.lat, location.lng]);
+}
+
+// NEW FEATURE ADDED
+async function refreshLiveRouteLine() {
+    const driverLocation = routeMapState.driverLocation;
+    const destination = routeMapState.destinationLocation;
+
+    if (!routeMap || !driverLocation || !destination) {
+        return;
+    }
+
+    const now = Date.now();
+    if (now - routeMapState.lastRouteRefresh < 8000) {
+        return;
+    }
+    routeMapState.lastRouteRefresh = now;
+
+    try {
+        const routeResponse = await fetch(`https://router.project-osrm.org/route/v1/driving/${driverLocation.lng},${driverLocation.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`);
+        if (!routeResponse.ok) {
+            return;
+        }
+
+        const routeData = await routeResponse.json();
+        const route = routeData.routes && routeData.routes[0];
+        if (!route || !route.geometry) {
+            return;
+        }
+
+        if (routeMapState.routeLayer) {
+            routeMap.removeLayer(routeMapState.routeLayer);
+        }
+
+        routeMapState.routeLayer = L.geoJSON(route.geometry, {
+            style: {
+                color: '#8B0000',
+                weight: 5,
+                opacity: 0.9
+            }
+        }).addTo(routeMap);
+
+        const etaMinutes = route.duration ? Math.max(1, Math.round(route.duration / 60)) : null;
+        const distanceKm = route.distance ? (route.distance / 1000).toFixed(1) : null;
+        if (etaMinutes && distanceKm) {
+            updateLiveRouteStatus(`tracking active, ${distanceKm} km away, ETA ${etaMinutes} min`);
+        } else {
+            updateLiveRouteStatus('tracking active');
+        }
+    } catch (routeError) {
+        console.error('Live route refresh failed:', routeError);
+    }
+}
+
+// NEW FEATURE ADDED
+function stopLiveRouteTracking() {
+    if (routeMapState.locationWatchId !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(routeMapState.locationWatchId);
+    }
+    routeMapState.locationWatchId = null;
+}
+
+// NEW FEATURE ADDED
+function startLiveRouteTracking() {
+    stopLiveRouteTracking();
+
+    if (!navigator.geolocation) {
+        updateLiveRouteStatus('not supported by this browser');
+        return;
+    }
+
+    routeMapState.locationWatchId = navigator.geolocation.watchPosition(
+        position => {
+            const location = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                label: 'Live ambulance location'
+            };
+
+            updateDriverMarker(location);
+            refreshLiveRouteLine();
+        },
+        () => {
+            updateLiveRouteStatus('location permission needed');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+    );
+
+    updateLiveRouteStatus('tracking started');
+}
+
 async function initializeRouteMap(locationName) {
     const mapContainer = document.getElementById('route-map');
     if (!mapContainer || typeof L === 'undefined') {
@@ -492,24 +974,7 @@ async function initializeRouteMap(locationName) {
             }).addTo(routeMap).bindPopup('Ambulance current location');
             points.push([driverLocation.lat, driverLocation.lng]);
 
-            try {
-                const routeResponse = await fetch(`https://router.project-osrm.org/route/v1/driving/${driverLocation.lng},${driverLocation.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`);
-                if (routeResponse.ok) {
-                    const routeData = await routeResponse.json();
-                    const route = routeData.routes && routeData.routes[0];
-                    if (route && route.geometry) {
-                        routeMapState.routeLayer = L.geoJSON(route.geometry, {
-                            style: {
-                                color: '#8B0000',
-                                weight: 5,
-                                opacity: 0.9
-                            }
-                        }).addTo(routeMap);
-                    }
-                }
-            } catch (routeError) {
-                console.error('Route fetch failed:', routeError);
-            }
+            await refreshLiveRouteLine();
         }
 
         if (points.length === 1) {
@@ -517,9 +982,12 @@ async function initializeRouteMap(locationName) {
         } else {
             routeMap.fitBounds(L.latLngBounds(points).pad(0.2));
         }
+
+        startLiveRouteTracking();
     } catch (error) {
         console.error('Error loading route map:', error);
         mapContainer.innerHTML = '<div class="muted" style="padding:1.5rem">Map preview unavailable. Open the route for directions.</div>';
+        updateLiveRouteStatus('map preview unavailable');
     }
 }
 
@@ -628,6 +1096,48 @@ async function saveHospital() {
 document.addEventListener('DOMContentLoaded', function() {
     // Show home page by default
     switchRole('home');
+
+    // NEW FEATURE ADDED
+    const emergencyForm = document.getElementById('step-form');
+    const reporterInput = document.getElementById('reporter-name');
+    if (emergencyForm && reporterInput && !document.getElementById('voice-report-box')) {
+        reporterInput.insertAdjacentHTML('beforebegin', `
+            <div id="voice-report-box" class="voice-report-box">
+                <button id="voice-report-btn" type="button" class="btn btn-outline btn-full">Speak Emergency</button>
+                <p id="voice-report-status" class="voice-report-status">Use voice to fill emergency details faster.</p>
+                <div id="voice-transcript" class="voice-transcript" style="display:none"></div>
+            </div>
+        `);
+
+    }
+
+    // NEW FEATURE ADDED
+    const voiceButton = document.getElementById('voice-report-btn');
+    if (voiceButton) {
+        voiceButton.addEventListener('click', startVoiceReport);
+    }
+
+    // NEW FEATURE ADDED
+    const injurySelect = document.getElementById('injury-type');
+    if (injurySelect && !document.getElementById('emergency-ai-preview')) {
+        injurySelect.insertAdjacentHTML('afterend', '<div id="emergency-ai-preview" class="ai-preview" style="display:none"></div>');
+    }
+
+    // NEW FEATURE ADDED
+    const statusSteps = document.querySelector('#step-status .status-steps');
+    if (statusSteps && !document.getElementById('submitted-ai-insights')) {
+        statusSteps.insertAdjacentHTML('afterend', '<div id="submitted-ai-insights" class="ai-preview" style="display:none"></div>');
+    }
+
+    // NEW FEATURE ADDED
+    ['severity', 'injury-type', 'location'].forEach(id => {
+        const field = document.getElementById(id);
+        if (field) {
+            field.addEventListener('change', updateEmergencyAiPreview);
+            field.addEventListener('input', updateEmergencyAiPreview);
+        }
+    });
+    updateEmergencyAiPreview();
 
     // Setup mobile menu toggle
     const menuToggle = document.getElementById('menu-toggle');

@@ -104,6 +104,13 @@
                 <h2>Report an Emergency</h2>
                 <p class="info-text">Quickly provide details so we can dispatch help immediately.</p>
 
+                <!-- NEW FEATURE ADDED -->
+                <div id="voice-report-box" class="voice-report-box">
+                    <button id="voice-report-btn" type="button" class="btn btn-outline btn-full">Speak Emergency</button>
+                    <p id="voice-report-status" class="voice-report-status">Use voice to fill emergency details faster.</p>
+                    <div id="voice-transcript" class="voice-transcript" style="display:none"></div>
+                </div>
+
                 <input type="text" id="reporter-name" placeholder="Your full name" class="input">
                 <input type="text" id="location" placeholder="Location (e.g., Chabahil Chowk)" class="input">
 
@@ -141,6 +148,15 @@
                     <div class="step done">Ambulance assigned</div>
                     <div class="step active">Routing to hospital</div>
                     <div class="step">Estimated arrival: ~6 min</div>
+                </div>
+
+                <!-- NEW FEATURE ADDED -->
+                <div id="reporter-tracking-card" class="reporter-tracking-card">
+                    <div>
+                        <strong>Live response tracker</strong>
+                        <p>Ambulance dispatch accepted. Driver route and ETA will update during the case.</p>
+                    </div>
+                    <span id="reporter-eta" class="tracker-eta">ETA ~6 min</span>
                 </div>
 
                 <p class="muted" style="text-align: center; margin-top: 1rem;">Emergency ID: <strong id="emergency-id">--</strong></p>
